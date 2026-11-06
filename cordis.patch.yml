@@ -1,0 +1,4 @@
+- insert:
+    - id: server-toolbox
+      name: '@local/dsh-server-toolbox'
+      config: {}

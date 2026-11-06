@@ -1,0 +1,75 @@
+import assert from 'node:assert/strict';
+import { randomBytes, generateKeyPairSync } from 'node:crypto';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createRequire } from 'node:module';
+import { createStore } from './index.js';
+import { createApplication } from './application.js';
+import { protect, unprotect, credentialAdapter, safeOutput } from './secrets.js';
+import { sshOperation } from './ssh.js';
+const require=createRequire(import.meta.url), {Server}=require('ssh2');
+const secret='dummy-'+randomBytes(20).toString('hex')+' %+=汉字';
+const privateKey=generateKeyPairSync('rsa',{modulusLength:2048,privateKeyEncoding:{type:'pkcs1',format:'pem'},publicKeyEncoding:{type:'spki',format:'pem'}}).privateKey;
+let authCount=0,execCount=0,connectionCount=0;
+const clients=new Set();
+const server=new Server({hostKeys:[privateKey]},client=>{
+ connectionCount++;clients.add(client);client.on('error',()=>{});client.on('close',()=>clients.delete(client));
+ client.on('authentication',ctx=>{if(ctx.method==='password'){authCount++;if(ctx.username==='integration'&&ctx.password===secret)return ctx.accept();}ctx.reject(['password']);});
+ client.on('ready',()=>client.on('session',accept=>{
+   const session=accept();session.on('exec',(accept,_reject,info)=>{execCount++;const stream=accept();stream.on('error',()=>{});if(info.command==='hang')return;if(info.command==='long'){stream.write('A'.repeat(100000));}else{stream.write('ok '+secret+'\n');}stream.exit(0);stream.end();});
+ }));
+});
+await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve);});
+const dir=await mkdtemp(join(tmpdir(),'dsh-server-toolbox-ssh-test-'));
+try {
+ const boundarySecret='SYNTHETIC-secret-123';
+ const boundary=safeOutput([Buffer.from('X'.repeat(65530)+'SYNTHE')],boundarySecret,true);
+ assert.ok(!boundary.output.endsWith('SYNTHE'));
+ const expanded=safeOutput([Buffer.from('A'.repeat(65536))],'A',false);assert.ok(Buffer.byteLength(expanded.output)<=65536);
+ const utf8=safeOutput([Buffer.from('prefix 汉'),Buffer.from('字 suffix')],'汉字',false);assert.ok(!utf8.output.includes('汉字'));
+ const port=server.address().port;
+ const file=join(dir,'servers.json'),store=createStore(file),records=new Map();
+ const credentials=credentialAdapter({async describeRecord(k){assert.match(k,/^[a-z][a-z0-9-]*\/[a-z][a-z0-9-]*$/);return {configured:records.has(k)};},async readRecord(k){return records.get(k);},async modifyRecord(k,fn){records.set(k,await fn(records.get(k)));return records.get(k);},async deleteRecord(k){records.delete(k);}});
+ let allow=false,approvalCount=0;
+ const app=createApplication({store,credentials,protect,unprotect,ssh:sshOperation,approve:async()=>{approvalCount++;return allow;}});
+ let value=await app({action:'save',revision:0,server:{name:'本地集成测试',host:'127.0.0.1',port,user:'integration',auth:'password',services:[],projects:[]}},'ui');
+ const s=value.servers[0],id=s.id;
+ assert.equal(s.passwordConfigured,false);
+ await assert.rejects(app({action:'credential-set',id,revision:1,password:secret},'agent'),/只能由用户/);
+ await assert.rejects(app({action:'host-trust',id,revision:1,challenge:'fake'},'agent'),/只能由用户/);
+ await assert.rejects(app({action:'test',id},'agent'),/指纹/);
+ assert.equal(connectionCount,0);
+ await app({action:'credential-set',id,revision:1,password:secret},'ui');
+ const cipher=[...records.values()][0].payload.encrypted;
+ assert.ok(cipher.startsWith('dpapi:v1:'));assert.ok(!cipher.includes(secret));assert.equal(await unprotect(cipher),secret);
+ assert.ok(!(await readFile(file,'utf8')).includes(secret));
+ value=await app({action:'get',id},'agent');assert.equal(value.passwordConfigured,true);assert.ok(!JSON.stringify(value).includes(secret));assert.ok(!JSON.stringify(value).includes('dpapi:'));
+ const observed=await app({action:'host-probe',id,revision:1},'ui');assert.match(observed.fingerprint,/^SHA256:/);assert.equal(authCount,0);
+ await assert.rejects(app({action:'host-trust',id,revision:1,challenge:'fake'},'ui'),/过期/);
+ await app({action:'host-trust',id,revision:1,challenge:observed.challenge},'ui');
+ await assert.rejects(app({action:'host-trust',id,revision:1,challenge:observed.challenge},'ui'),/过期/);
+ const result=await app({action:'test',id},'agent');assert.equal(result.authenticated,true);assert.equal(execCount,0);assert.equal(authCount,1);
+ let count=connectionCount;
+ await assert.rejects(app({action:'run',id,command:'echo test'},'agent',{agent:{id:'test-agent'}}),/未获得/);
+ assert.equal(connectionCount,count);assert.equal(approvalCount,1);
+ await assert.rejects(app({action:'run',id,command:'echo test'},'ui'),/页面不提供/);
+ allow=true;
+ const run=await app({action:'run',id,command:'echo test'},'agent',{agent:{id:'test-agent'}});assert.equal(run.exitCode,0);assert.ok(run.output.includes('[REDACTED]'));assert.ok(!run.output.includes(secret));assert.equal(execCount,1);
+ const long=await app({action:'run',id,command:'long'},'agent',{agent:{id:'test-agent'}});assert.equal(long.truncated,true);assert.ok(Buffer.byteLength(long.output)<=65536);
+ const authBefore=authCount;
+ await assert.rejects(sshOperation(s,{password:secret,trusted:'SHA256:wrong'}),/指纹/);assert.equal(authCount,authBefore);
+ await assert.rejects(sshOperation(s,{password:'wrong',trusted:observed.fingerprint}),/认证失败/);
+ await assert.rejects(sshOperation(s,{password:secret,trusted:observed.fingerprint,command:'hang',timeoutSeconds:3}),/超时/);
+ const controller=new AbortController();controller.abort();await assert.rejects(sshOperation(s,{password:secret,trusted:observed.fingerprint,signal:controller.signal}),/取消/);
+ // A target change must lose both host trust and the saved password.
+ const raw=(await store({action:'list'})).servers[0];
+ await app({action:'save',revision:1,server:{...raw,user:'different-user'}},'agent');
+ assert.equal(records.size,0);
+ await assert.rejects(app({action:'test',id},'agent'),/指纹/);
+ console.log('PASS: real loopback SSH password authentication, DPAPI roundtrip, encrypted-only persistence, user-only trust and password operations, no pre-trust authentication, approval denial before networking, approved execution, redacted output, output bounds, wrong host key, wrong password, timeout, cancellation, and target-change invalidation.');
+} finally {
+ for(const client of clients)client.destroy();
+ await new Promise(resolve=>server.close(resolve));
+ await rm(dir,{recursive:true,force:true});
+}
