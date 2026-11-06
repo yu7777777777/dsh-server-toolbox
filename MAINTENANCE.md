@@ -2,8 +2,18 @@
 
 ## 日常修改
 
+仓库目录是脱敏发布副本，不是 DSH 当前运行的目录。当前运行目录可以继续保留服务器资料；不要把它直接 `git add`。
+
+需要同步源码时，在仓库目录执行：
+
+```powershell
+.\Sync-Source.ps1 -SourceDirectory 'D:\你的本地插件目录'
+```
+
+脚本只复制已列出的源码、资源和测试文件，不复制 `data`、`node_modules`、截图、日志或凭证。同步后仍要人工检查变更。
+
 1. 只在本地开发副本中修改代码，不直接编辑 GitHub 网页里的源码。
-2. 完成一个小改动后运行 `npm test`；Windows 上的集成测试会验证 DPAPI、SSH、主机指纹和脱敏输出。
+2. 在运行副本完成改动后，用上述脚本同步到仓库。仓库需要 Node.js 22 或更高版本和 pnpm 11.28.5；首次执行 `pnpm install --ignore-scripts`，随后运行 `pnpm test`。Windows 上的集成测试会验证 DPAPI、SSH、主机指纹和脱敏输出；不要在 Linux 上声称完整 DPAPI 集成测试已通过。依赖改变时重新安装并提交更新的 `pnpm-lock.yaml`。
 3. 用 `git status` 查看变更，用 `git diff` 检查内容，确认没有 `data/`、凭证、私钥、日志或真实服务器资料。
 4. 更新 `package.json` 的版本号，并在 README 中记录用户可见的变化。
 5. 提交并推送：
