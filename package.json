@@ -13,7 +13,7 @@
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg"
   },
-  "files": ["index.js", "client.js", "application.js", "secrets.js", "ssh.js", "tools.js", "transport.js", "cordis.patch.yml", "locale/*.json", "icon.svg", "README.md"],
+  "files": ["index.js", "client.js", "application.js", "secrets.js", "ssh.js", "tools.js", "transport.js", "cordis.patch.yml", "locale/*.json", "icon.svg", "assets/icon.png", "README.md"],
   "dsh": {
     "bundle": { "patch": "./cordis.patch.yml" },
     "client": {
