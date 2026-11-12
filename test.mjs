@@ -65,13 +65,15 @@ try {
  nodes.find(n=>n.type==='button'&&n.children.includes(labels.edit)).props.onClick();
  let editor=renderNodes();assert.equal(editor.filter(n=>n.props.className?.includes('stb-editor-panel')).length,4);assert.ok(editor.some(n=>n.type==='input'&&n.props.type==='date'&&n.props.value==='2028-02-29'));
  assert.equal(editor.filter(n=>n.type==='button'&&n.props.type==='submit').length,1);assert.ok(!editor.some(n=>n.type==='button'&&n.children.includes(labels.add)));assert.ok(editor.some(n=>n.type==='button'&&n.children.includes(labels.saveRecord)));
+ assert.equal(editor.filter(n=>n.type==='h1').length,1);assert.ok(!editor.some(n=>n.props.className==='stb-editor-heading'));
+ assert.ok(simplifiedClient.includes('@container(min-width:960px)'));assert.ok(simplifiedClient.includes('position:static;grid-column:1/-1'));
  const select=()=>editor.find(n=>n.type==='select');
  select().props.onChange({target:{value:'password'}});editor=renderNodes();assert.equal(editor.filter(n=>n.type==='input'&&n.props.type==='password').length,2);assert.ok(editor.some(n=>n.type==='details'&&n.props.className==='stb-security-details'&&!n.props.open));
  const passwordInput=editor.find(n=>n.type==='input'&&n.props.type==='password');passwordInput.props.onChange({target:{value:'DUMMY_ONLY'}});editor=renderNodes();
  select().props.onChange({target:{value:'agent'}});editor=renderNodes();assert.equal(hookStates[2],'');assert.ok(!editor.some(n=>n.type==='input'&&n.props.type==='password'));
  select().props.onChange({target:{value:'config'}});editor=renderNodes();assert.ok(!editor.some(n=>n.type==='input'&&n.props.type==='number'));assert.ok(editor.some(n=>n.type==='input'&&n.props.value===''));
  editor.find(n=>n.type==='button'&&n.children.includes(labels.cancel)).props.onClick();editor=renderNodes();assert.ok(!editor.some(n=>n.type==='form'));
- editor.find(n=>n.type==='button'&&n.children.includes(labels.add)).props.onClick();editor=renderNodes();assert.ok(editor.some(n=>n.type==='h2'&&n.children.includes(labels.createTitle)));assert.ok(editor.some(n=>n.type==='input'&&n.props.type==='date'&&n.props.value===''));assert.ok(editor.some(n=>n.props.className==='stb-service-empty'));
+ editor.find(n=>n.type==='button'&&n.children.includes(labels.add)).props.onClick();editor=renderNodes();assert.ok(editor.some(n=>n.type==='h1'&&n.children.includes(labels.createTitle)));assert.ok(editor.some(n=>n.type==='input'&&n.props.type==='date'&&n.props.value===''));assert.ok(editor.some(n=>n.props.className==='stb-service-empty'));
  let called=0;
  const route=createUiRoute(async(args,caller)=>{called++;assert.equal(caller,'ui');return {version:1,revision:4,servers:[],action:args.action};});
  const request=(message)=>new Request('http://dsh.internal/api/local-server-toolbox',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(message)});
