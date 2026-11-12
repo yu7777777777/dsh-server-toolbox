@@ -52,8 +52,8 @@ try {
  assert.ok(definitions[0].parameters.properties.server.properties.services.items.properties.url);
  const simplifiedClient=await readFile(new URL('./client.js',import.meta.url),'utf8');assert.ok(!simplifiedClient.includes("t('projects')"));assert.ok(!simplifiedClient.includes("items('projects')"));assert.ok(simplifiedClient.includes("['name','url']"));assert.ok(simplifiedClient.includes("rel:'noopener noreferrer'"));
  // Render a synthetic server using mocked hooks; no real data or network.
- let Page,stateIndex=0;const labels={};
- const mockReact={Fragment:'fragment',createElement:(type,props,...children)=>({type,props:props||{},children:children.flat(Infinity)}),useState:initial=>[stateIndex++===0?{revision:0,servers:[{...validateServer({...server,expiresOn:'2028-02-29'}),passwordConfigured:true,trustedFingerprint:'SHA256:TEST'}]}:initial,()=>{}],useEffect:()=>{},useSyncExternalStore:()=>{}};
+ let Page,stateIndex=0;const labels={},hookStates=[];
+ const mockReact={Fragment:'fragment',createElement:(type,props,...children)=>({type,props:props||{},children:children.flat(Infinity)}),useState:initial=>{const i=stateIndex++;if(!(i in hookStates))hookStates[i]=i===0?{revision:0,servers:[{...validateServer({...server,expiresOn:'2028-02-29'}),passwordConfigured:true,trustedFingerprint:'SHA256:TEST'}]}:initial;return [hookStates[i],value=>{hookStates[i]=typeof value==='function'?value(hookStates[i]):value;}];},useEffect:()=>{},useSyncExternalStore:()=>{}};
  runInNewContext(simplifiedClient,{window:{__ModuleLoader__:{load:definition=>definition.factory(()=>mockReact).apply({effect:fn=>fn(),locale:{register:(_namespace,language,values)=>{if(language==='zh')Object.assign(labels,values);return()=>{};},bind:()=>key=>labels[key],subscribe:()=>{},getSnapshot:()=>0},slots:{inject:(_name,fn)=>fn(),register:(meta,component)=>{if(meta.name==='main')Page=component;}},connection:{rpc:{call:()=>{throw Error('Unexpected network call');}}}})}}});
  const page=Page();const nodes=[];function walk(node){if(!node||typeof node!=='object')return;nodes.push(node);for(const child of node.children||[])walk(child);}walk(page);
  const article=nodes.find(n=>n.type==='article');assert.ok(article);
@@ -61,6 +61,17 @@ try {
  const danger=nodes.filter(n=>n.type==='button'&&n.props.className==='stb-danger');assert.equal(danger.length,2);
  const moreNodes=[];function collect(node){if(!node||typeof node!=='object')return;moreNodes.push(node);for(const child of node.children||[])collect(child);}collect(more);assert.ok(danger.every(n=>moreNodes.includes(n)));
  const primary=nodes.find(n=>n.type==='button'&&n.children.includes(labels.test));assert.equal(primary.props.className,'stb-primary');assert.ok(nodes.some(n=>n.type==='time'&&n.props.dateTime==='2028-02-29'));
+ function renderNodes(){stateIndex=0;const out=[];const visit=node=>{if(!node||typeof node!=='object')return;out.push(node);for(const child of node.children||[])visit(child);};visit(Page());return out;}
+ nodes.find(n=>n.type==='button'&&n.children.includes(labels.edit)).props.onClick();
+ let editor=renderNodes();assert.equal(editor.filter(n=>n.props.className?.includes('stb-editor-panel')).length,4);assert.ok(editor.some(n=>n.type==='input'&&n.props.type==='date'&&n.props.value==='2028-02-29'));
+ assert.equal(editor.filter(n=>n.type==='button'&&n.props.type==='submit').length,1);assert.ok(!editor.some(n=>n.type==='button'&&n.children.includes(labels.add)));assert.ok(editor.some(n=>n.type==='button'&&n.children.includes(labels.saveRecord)));
+ const select=()=>editor.find(n=>n.type==='select');
+ select().props.onChange({target:{value:'password'}});editor=renderNodes();assert.equal(editor.filter(n=>n.type==='input'&&n.props.type==='password').length,2);assert.ok(editor.some(n=>n.type==='details'&&n.props.className==='stb-security-details'&&!n.props.open));
+ const passwordInput=editor.find(n=>n.type==='input'&&n.props.type==='password');passwordInput.props.onChange({target:{value:'DUMMY_ONLY'}});editor=renderNodes();
+ select().props.onChange({target:{value:'agent'}});editor=renderNodes();assert.equal(hookStates[2],'');assert.ok(!editor.some(n=>n.type==='input'&&n.props.type==='password'));
+ select().props.onChange({target:{value:'config'}});editor=renderNodes();assert.ok(!editor.some(n=>n.type==='input'&&n.props.type==='number'));assert.ok(editor.some(n=>n.type==='input'&&n.props.value===''));
+ editor.find(n=>n.type==='button'&&n.children.includes(labels.cancel)).props.onClick();editor=renderNodes();assert.ok(!editor.some(n=>n.type==='form'));
+ editor.find(n=>n.type==='button'&&n.children.includes(labels.add)).props.onClick();editor=renderNodes();assert.ok(editor.some(n=>n.type==='h2'&&n.children.includes(labels.createTitle)));assert.ok(editor.some(n=>n.type==='input'&&n.props.type==='date'&&n.props.value===''));assert.ok(editor.some(n=>n.props.className==='stb-service-empty'));
  let called=0;
  const route=createUiRoute(async(args,caller)=>{called++;assert.equal(caller,'ui');return {version:1,revision:4,servers:[],action:args.action};});
  const request=(message)=>new Request('http://dsh.internal/api/local-server-toolbox',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(message)});
