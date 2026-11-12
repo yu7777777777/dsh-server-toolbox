@@ -2,7 +2,7 @@ const str={type:'string'};
 const legacyPath={...str,description:'仅为保留旧版资料；新增服务不要填写此字段。',deprecated:true};
 const legacyItem={type:'object',properties:{name:str,directory:legacyPath,notes:legacyPath},required:['name'],additionalProperties:false};
 const serviceItem={type:'object',properties:{name:{...str,description:'服务名称，例如网站后台、文件管理。'},url:{...str,description:'完整 HTTP/HTTPS 访问网址，可含端口，不含账号密码。'},directory:legacyPath,notes:legacyPath},required:['name'],additionalProperties:false};
-const serverSchema={type:'object',properties:{id:str,name:str,host:str,user:str,port:{type:'integer'},auth:{type:'string',enum:['password','agent','key','config']},identityFile:str,sshAlias:str,notes:str,services:{type:'array',items:serviceItem,description:'服务清单，新增条目只填名称 name 和访问网址 url。'},projects:{type:'array',items:legacyItem,description:'仅为旧版数据兼容保留，不用于新建项目登记；原样保留已有内容。',deprecated:true}},required:['name'],additionalProperties:false};
+const serverSchema={type:'object',properties:{id:str,name:str,host:str,user:str,port:{type:'integer'},auth:{type:'string',enum:['password','agent','key','config']},identityFile:str,sshAlias:str,notes:str,expiresOn:{type:'string',description:'服务器到期日期 YYYY-MM-DD；留空字符串清除，不传则保留原日期。仅作登记，不触发续费、提醒或停止连接。'},services:{type:'array',items:serviceItem,description:'服务清单，新增条目只填名称 name 和访问网址 url。'},projects:{type:'array',items:legacyItem,description:'仅为旧版数据兼容保留，不用于新建项目登记；原样保留已有内容。',deprecated:true}},required:['name'],additionalProperties:false};
 const output={schema:{type:'object',additionalProperties:true},render:(_args,value)=>[{type:'text',text:JSON.stringify(value)}]};
 export function registerTools(ctx,operation){
   ctx.effect(()=>ctx.tools.register({
