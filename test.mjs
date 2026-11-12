@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import {runInNewContext} from 'node:vm';
 import {mkdtemp,rm,readFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -50,6 +51,16 @@ try {
  assert.equal(definitions[0].name,'server_toolbox');assert.equal(routes[0].path,'/api/local-server-toolbox');assert.deepEqual(routes[0].methods,['POST']);
  assert.ok(definitions[0].parameters.properties.server.properties.services.items.properties.url);
  const simplifiedClient=await readFile(new URL('./client.js',import.meta.url),'utf8');assert.ok(!simplifiedClient.includes("t('projects')"));assert.ok(!simplifiedClient.includes("items('projects')"));assert.ok(simplifiedClient.includes("['name','url']"));assert.ok(simplifiedClient.includes("rel:'noopener noreferrer'"));
+ // Render a synthetic server using mocked hooks; no real data or network.
+ let Page,stateIndex=0;const labels={};
+ const mockReact={Fragment:'fragment',createElement:(type,props,...children)=>({type,props:props||{},children:children.flat(Infinity)}),useState:initial=>[stateIndex++===0?{revision:0,servers:[{...validateServer({...server,expiresOn:'2028-02-29'}),passwordConfigured:true,trustedFingerprint:'SHA256:TEST'}]}:initial,()=>{}],useEffect:()=>{},useSyncExternalStore:()=>{}};
+ runInNewContext(simplifiedClient,{window:{__ModuleLoader__:{load:definition=>definition.factory(()=>mockReact).apply({effect:fn=>fn(),locale:{register:(_namespace,language,values)=>{if(language==='zh')Object.assign(labels,values);return()=>{};},bind:()=>key=>labels[key],subscribe:()=>{},getSnapshot:()=>0},slots:{inject:(_name,fn)=>fn(),register:(meta,component)=>{if(meta.name==='main')Page=component;}},connection:{rpc:{call:()=>{throw Error('Unexpected network call');}}}})}}});
+ const page=Page();const nodes=[];function walk(node){if(!node||typeof node!=='object')return;nodes.push(node);for(const child of node.children||[])walk(child);}walk(page);
+ const article=nodes.find(n=>n.type==='article');assert.ok(article);
+ const more=nodes.find(n=>n.props.className==='stb-more');assert.ok(more&&more.type==='details');
+ const danger=nodes.filter(n=>n.type==='button'&&n.props.className==='stb-danger');assert.equal(danger.length,2);
+ const moreNodes=[];function collect(node){if(!node||typeof node!=='object')return;moreNodes.push(node);for(const child of node.children||[])collect(child);}collect(more);assert.ok(danger.every(n=>moreNodes.includes(n)));
+ const primary=nodes.find(n=>n.type==='button'&&n.children.includes(labels.test));assert.equal(primary.props.className,'stb-primary');assert.ok(nodes.some(n=>n.type==='time'&&n.props.dateTime==='2028-02-29'));
  let called=0;
  const route=createUiRoute(async(args,caller)=>{called++;assert.equal(caller,'ui');return {version:1,revision:4,servers:[],action:args.action};});
  const request=(message)=>new Request('http://dsh.internal/api/local-server-toolbox',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(message)});
