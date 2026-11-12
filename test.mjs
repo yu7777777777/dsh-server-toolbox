@@ -32,6 +32,18 @@ try {
  assert.equal(JSON.parse(await readFile(file,'utf8')).servers[0].name,'已更新');
  const b=await op({action:'delete',id,revision:2});assert.equal(b.servers.length,0);
  await assert.rejects(op({action:'get',id}),/不存在/);
+ // Optional expiry: calendar validity, persistence, old-client preservation and explicit clearing.
+ assert.equal(validateServer(server).expiresOn,'');
+ for(const expiresOn of ['2028-02-29','2026-12-31','0001-01-01','9999-12-31'])assert.equal(validateServer({...server,expiresOn}).expiresOn,expiresOn);
+ for(const expiresOn of ['2026-02-29','2026-04-31','2026-13-01','2026-00-10','2026-11-00','2026-1-02','0000-01-01','tomorrow',null,42])assert.throws(()=>validateServer({...server,expiresOn}));
+ const expiryFile=join(dir,'expiry.json'),expiryStore=createStore(expiryFile);
+ const firstExpiry=await expiryStore({action:'save',server:{...server,expiresOn:'2028-02-29'},revision:0});
+ const expiryId=firstExpiry.servers[0].id;
+ assert.equal((await createStore(expiryFile)({action:'get',id:expiryId})).expiresOn,'2028-02-29');
+ await expiryStore({action:'save',server:{...server,id:expiryId},revision:1});
+ assert.equal((await expiryStore({action:'get',id:expiryId})).expiresOn,'2028-02-29');
+ await expiryStore({action:'save',server:{...server,id:expiryId,expiresOn:''},revision:2});
+ assert.equal((await createStore(expiryFile)({action:'get',id:expiryId})).expiresOn,'');
  const definitions=[],routes=[];
  // Cold start has no document/window/HTML injection; Connection owns transport admission.
  apply({effect:fn=>fn(),tools:{register:def=>{definitions.push(def);return()=>{};}},connection:{fetch:{register:route=>{routes.push(route);return()=>{};}}}});

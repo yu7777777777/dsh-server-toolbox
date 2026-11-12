@@ -10,12 +10,17 @@ import { registerTools } from './tools.js';
 
 export const inject = ['tools', 'connection', 'credentials', 'approval'];
 const dataFile = fileURLToPath(new URL('./data/servers.json', import.meta.url));
-const fields = ['id','name','host','user','port','auth','identityFile','sshAlias','notes','services','projects'];
+const fields = ['id','name','host','user','port','auth','identityFile','sshAlias','notes','expiresOn','services','projects'];
 function text(v, max=2000) { if (typeof v !== 'string' || v.length > max || /[\x00-\x08]/.test(v)) throw new Error('字段必须为有效文本'); return v.trim(); }
 export function validateServer(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('服务器数据无效');
   for (const k of Object.keys(raw)) if (!fields.includes(k)) throw new Error(`不支持字段 ${k}；不要保存密码或私钥正文`);
   const s = {id:raw.id ? text(raw.id,80) : randomUUID(),name:text(raw.name,120),host:text(raw.host||'',255),user:text(raw.user||'',120),port:Number(raw.port??22),auth:raw.auth||'password',identityFile:text(raw.identityFile||'',1024),sshAlias:text(raw.sshAlias||'',120),notes:text(raw.notes||''),services:[],projects:[]};
+  s.expiresOn=raw.expiresOn===undefined?'':text(raw.expiresOn,10);
+  if(s.expiresOn){
+    const date=new Date(`${s.expiresOn}T00:00:00.000Z`);
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(s.expiresOn)||s.expiresOn<'0001-01-01'||!Number.isFinite(date.getTime())||date.toISOString().slice(0,10)!==s.expiresOn)throw new Error('到期日期无效，请选择有效的 YYYY-MM-DD 日期');
+  }
   if (!s.name) throw new Error('服务器名称必填');
   if (!['password','agent','key','config'].includes(s.auth)) throw new Error('请选择密码、SSH Agent、密钥路径或 SSH Config');
   if (!Number.isInteger(s.port)||s.port<1||s.port>65535) throw new Error('端口必须为 1–65535');
@@ -54,7 +59,7 @@ export function createStore(file=dataFile) {
   async function operation(args={}) {
     const action=args.action||'list';
     if(action==='list'||action==='get') { const state=await load();if(action==='get'){const s=state.servers.find(s=>s.id===args.id);if(!s)throw new Error('服务器不存在');return {...s,connection:connection(s)};}const q=String(args.query||'').toLowerCase();return {...state,servers:state.servers.filter(s=>JSON.stringify(s).toLowerCase().includes(q))}; }
-    const run=queue.then(async()=>{const state=await load();if(args.revision!==state.revision)throw new Error('数据已更新，请刷新后重试');if(action==='save'){const s=validateServer(args.server);const i=state.servers.findIndex(x=>x.id===s.id);if(i<0)state.servers.push(s);else{if(!Object.hasOwn(args.server,'projects'))s.projects=state.servers[i].projects;state.servers[i]=s;}}else if(action==='delete'){if(!state.servers.some(s=>s.id===args.id))throw new Error('服务器不存在');state.servers=state.servers.filter(s=>s.id!==args.id);}else throw new Error('未知操作');state.revision++;const temp=file+'.'+randomUUID()+'.tmp';await mkdir(dirname(file),{recursive:true});await writeFile(temp,JSON.stringify(state,null,2),'utf8');await rename(temp,file);return state;});queue=run.catch(()=>{});return run;
+    const run=queue.then(async()=>{const state=await load();if(args.revision!==state.revision)throw new Error('数据已更新，请刷新后重试');if(action==='save'){const s=validateServer(args.server);const i=state.servers.findIndex(x=>x.id===s.id);if(i<0)state.servers.push(s);else{if(!Object.hasOwn(args.server,'expiresOn'))s.expiresOn=state.servers[i].expiresOn;if(!Object.hasOwn(args.server,'projects'))s.projects=state.servers[i].projects;state.servers[i]=s;}}else if(action==='delete'){if(!state.servers.some(s=>s.id===args.id))throw new Error('服务器不存在');state.servers=state.servers.filter(s=>s.id!==args.id);}else throw new Error('未知操作');state.revision++;const temp=file+'.'+randomUUID()+'.tmp';await mkdir(dirname(file),{recursive:true});await writeFile(temp,JSON.stringify(state,null,2),'utf8');await rename(temp,file);return state;});queue=run.catch(()=>{});return run;
   }
   return operation;
 }
