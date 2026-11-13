@@ -1,7 +1,7 @@
 // This exact /api route is carried by the authenticated DSH Connection,
 // including shell-owned transports. No HTML-global token or raw fetch required.
 const endpoint='local-server-toolbox';
-const actions=new Set(['list','get','save','delete','credential-set','credential-clear','credential-reveal','host-probe','host-trust','test']);
+const actions=new Set(['list','get','save','delete','credential-set','credential-clear','credential-reveal','identity-set','identity-clear','host-probe','host-trust','test']);
 export function createUiRoute(operation) {
   return {path:`/api/${endpoint}`,methods:['POST'],requestBody:'buffered',async fetch(request){
     const headers={'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'};
@@ -20,6 +20,6 @@ export function createUiRoute(operation) {
     if(!actions.has(message.payload.action||'list'))return fail(id,'toolbox/forbidden','此页面通道不允许该操作。');
     if(request.signal.aborted)return fail(id,'toolbox/cancelled','操作已取消。');
     try{return response(id,{ok:true,value:await operation(message.payload,'ui',{signal:request.signal})});}
-    catch(error){return fail(id,'toolbox/operation-failed',message.payload.action==='credential-reveal'?'无法查看已保存密码，请刷新后重试或重新设置。':error instanceof Error?error.message:'操作失败');}
+    catch(error){return fail(id,'toolbox/operation-failed',message.payload.action==='credential-reveal'?'无法查看已保存密码，请刷新后重试或重新设置。':['identity-set','identity-clear'].includes(message.payload.action)?'私钥操作失败。请确认使用 Windows，导入的是未加口令的 SSH 私钥（不是公钥或文件夹），且不超过 32 KiB。':error instanceof Error?error.message:'操作失败');}
   }};
 }

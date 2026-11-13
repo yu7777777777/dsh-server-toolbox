@@ -1,11 +1,12 @@
 import { createHash, randomBytes } from 'node:crypto';
+import { validatePrivateKey } from './ssh.js';
 
 export function binding(s) { return createHash('sha256').update(JSON.stringify([s.id,s.host,s.port,s.user,s.auth==='config'?s.sshAlias:''])).digest('hex'); }
 const key=(s,kind)=>`server-toolbox/${kind}-${binding(s)}`;
 export function createApplication({store,credentials,protect,unprotect,ssh,approve}) {
   const pending=new Map();let tail=Promise.resolve();
   const serial=fn=>{const p=tail.then(fn);tail=p.catch(()=>{});return p;};
-  async function decorate(s){const {connection,...raw}=s;return {...raw,passwordConfigured:await credentials.has(key(s,'password')),trustedFingerprint:(await credentials.get(key(s,'host')))?.fingerprint||null,...(connection?{connection}: {})};}
+  async function decorate(s){const {connection,...raw}=s;return {...raw,passwordConfigured:await credentials.has(key(s,'password')),keyConfigured:Boolean(await credentials.has(key(s,'privatekey'))),trustedFingerprint:(await credentials.get(key(s,'host')))?.fingerprint||null,...(connection?{connection}: {})};}
   async function read(id){return store({action:'get',id});}
   async function runSSH(args,exec={}) {
     const s=await read(args.id);
@@ -19,28 +20,48 @@ export function createApplication({store,credentials,protect,unprotect,ssh,appro
       if(!exec.agent)throw new Error('远程执行必须属于一个受权限检查的 DSH 会话');
       if(!await approve(s,command,exec))throw new Error('远程命令未获得本次执行授权；未发起 SSH 连接。');
     }
+    const seconds=args.timeoutSeconds??20;
+    if(!Number.isInteger(seconds)||seconds<3||seconds>60)throw new Error('超时必须为 3–60 秒');
+    exec.signal?.throwIfAborted();
     return serial(async()=>{
+      exec.signal?.throwIfAborted();
       const current=await read(args.id);
       if(binding(current)!==binding(s)||JSON.stringify(current)!==JSON.stringify(s))throw new Error('服务器记录在授权期间发生变化，请重新发起。');
       const activePin=await credentials.get(key(current,'host'));
       if(activePin?.fingerprint!==pin.fingerprint)throw new Error('主机信任记录已变更，请重新发起。');
-      let password;
+      let password,privateKey;
       if(current.auth==='password'){
         const record=await credentials.get(key(current,'password'));
         if(!record?.encrypted)throw new Error('请先在插件专用密码框保存登录密码。');
         password=await unprotect(record.encrypted);
       }
-      const seconds=args.timeoutSeconds??20;
-      if(!Number.isInteger(seconds)||seconds<3||seconds>60)throw new Error('超时必须为 3–60 秒');
-      return ssh(current,{password,trusted:pin.fingerprint,command,timeoutSeconds:seconds,signal:exec.signal});
+      if(current.auth==='key'&&(current.identityMode??(current.identityFile?'path':'stored'))==='stored'){
+        let record;
+        try {record=await credentials.get(key(current,'privatekey'));} catch {throw new Error('无法读取已保存私钥，请重新导入；不会回退使用文件路径。');}
+        if(!record?.encrypted)throw new Error('尚未保存已导入私钥，请在工具箱导入；不会回退使用文件路径。');
+        try {privateKey=validatePrivateKey(await unprotect(record.encrypted));} catch {throw new Error('已保存私钥无法解密或无效，请使用原 Windows 用户或重新导入；不会回退使用文件路径。');}
+      }
+      exec.signal?.throwIfAborted();
+      return ssh(current,{password,privateKey,trusted:pin.fingerprint,command,timeoutSeconds:seconds,signal:exec.signal});
     });
   }
   async function operation(args={},caller='agent',exec={}) {
-    if(['credential-set','credential-clear','credential-reveal','host-probe','host-trust'].includes(args.action)){
-      if(caller!=='ui')throw new Error('密码与主机信任只能由用户在插件界面管理。');
+    if(['credential-set','credential-clear','credential-reveal','identity-set','identity-clear','host-probe','host-trust'].includes(args.action)){
+      if(caller!=='ui')throw new Error('密码、私钥与主机信任只能由用户在插件界面管理。');
       return serial(async()=>{
         const s=await read(args.id);
         if(args.revision!==(await store({action:'list'})).revision)throw new Error('数据已更新，请刷新后重试');
+        if(args.action==='identity-set'){
+          if(s.auth!=='key'||s.identityMode!=='stored')throw new Error('请先保存为私钥认证及加密导入模式。');
+          exec.signal?.throwIfAborted();
+          const privateKey=validatePrivateKey(args.privateKey);
+          let encrypted;
+          try {encrypted=await protect(privateKey);} catch {throw new Error('私钥加密失败；未保存明文。');}
+          exec.signal?.throwIfAborted();
+          try {await credentials.set(key(s,'privatekey'),{encrypted});} catch {throw new Error('私钥保存失败；请重试导入。');}
+          return {saved:true};
+        }
+        if(args.action==='identity-clear'){exec.signal?.throwIfAborted();await credentials.delete(key(s,'privatekey'));return {cleared:true};}
         if(args.action==='credential-set'){
           if(s.auth!=='password')throw new Error('请先选择密码认证并保存服务器');
           if(typeof args.password!=='string'||!args.password||args.password.length>1024)throw new Error('请输入不超过 1024 字符的密码');
@@ -88,7 +109,12 @@ export function createApplication({store,credentials,protect,unprotect,ssh,appro
       const result=await store(args);
       if(before&&['save','delete'].includes(args.action)){
         const after=args.action==='save'?result.servers.find(s=>s.id===before.id):undefined;
-        if(!after||binding(after)!==binding(before))for(const kind of ['password','host'])await credentials.delete(key(before,kind));
+        const targetChanged=!after||after.host!==before.host||after.port!==before.port||after.user!==before.user||(after.auth===before.auth&&binding(after)!==binding(before));
+        if(targetChanged){
+          // Changing only auth/mode keeps credentials for switching back. Config
+          // aliases are metadata-only, so also clean the retained direct-host binding.
+          for(const id of new Set([binding(before),binding({...before,auth:'key'})]))for(const kind of ['password','host','privatekey'])await credentials.delete(`server-toolbox/${kind}-${id}`);
+        }
       }
       if(result.servers)return {...result,servers:await Promise.all(result.servers.map(decorate))};
       return decorate(result);
