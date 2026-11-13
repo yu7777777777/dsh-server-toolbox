@@ -11,6 +11,12 @@ import { registerTools } from './tools.js';
 export const inject = ['tools', 'connection', 'credentials', 'approval'];
 const dataFile = fileURLToPath(new URL('./data/servers.json', import.meta.url));
 const fields = ['id','name','host','user','port','auth','identityMode','identityFile','sshAlias','notes','expiresOn','services','projects'];
+const approvalModes = ['ask', 'follow-session'];
+// Unknown or corrupted values fall back to the safest mode instead of failing the whole store.
+export function normalizeSettings(raw) {
+  const approval = raw && typeof raw === 'object' && approvalModes.includes(raw.approval) ? raw.approval : 'ask';
+  return { approval };
+}
 function text(v, max=2000) { if (typeof v !== 'string' || v.length > max || /[\x00-\x08]/.test(v)) throw new Error('字段必须为有效文本'); return v.trim(); }
 export function validateServer(raw) {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('服务器数据无效');
@@ -57,16 +63,34 @@ export function connection(s) {
 }
 export function createStore(file=dataFile) {
   let queue=Promise.resolve();
-  async function load(){try{const state=JSON.parse(await readFile(file,'utf8'));if(state.version!==1||!Array.isArray(state.servers))throw new Error('数据版本无效');state.servers=state.servers.map(validateServer);return state;}catch(e){if(e.code==='ENOENT')return {version:1,revision:0,servers:[]};throw e;}}
+  async function load(){try{const state=JSON.parse(await readFile(file,'utf8'));if(state.version!==1||!Array.isArray(state.servers))throw new Error('数据版本无效');state.servers=state.servers.map(validateServer);state.settings=normalizeSettings(state.settings);return state;}catch(e){if(e.code==='ENOENT')return {version:1,revision:0,settings:normalizeSettings(),servers:[]};throw e;}}
   async function operation(args={}) {
     const action=args.action||'list';
     if(action==='list'||action==='get') { const state=await load();if(action==='get'){const s=state.servers.find(s=>s.id===args.id);if(!s)throw new Error('服务器不存在');return {...s,connection:connection(s)};}const q=String(args.query||'').toLowerCase();return {...state,servers:state.servers.filter(s=>JSON.stringify(s).toLowerCase().includes(q))}; }
-    const run=queue.then(async()=>{const state=await load();if(args.revision!==state.revision)throw new Error('数据已更新，请刷新后重试');if(action==='save'){const i=state.servers.findIndex(x=>x.id===args.server?.id);const input=i>=0&&args.server.identityMode===undefined?{...args.server,identityMode:state.servers[i].identityMode}:args.server;const s=validateServer(input);if(i<0)state.servers.push(s);else{if(!Object.hasOwn(args.server,'expiresOn'))s.expiresOn=state.servers[i].expiresOn;if(!Object.hasOwn(args.server,'projects'))s.projects=state.servers[i].projects;state.servers[i]=s;}}else if(action==='delete'){if(!state.servers.some(s=>s.id===args.id))throw new Error('服务器不存在');state.servers=state.servers.filter(s=>s.id!==args.id);}else throw new Error('未知操作');state.revision++;const temp=file+'.'+randomUUID()+'.tmp';await mkdir(dirname(file),{recursive:true});await writeFile(temp,JSON.stringify(state,null,2),'utf8');await rename(temp,file);return state;});queue=run.catch(()=>{});return run;
+    if(action==='settings-get'){const state=await load();return {revision:state.revision,settings:state.settings};}
+    const run=queue.then(async()=>{const state=await load();if(args.revision!==state.revision)throw new Error('数据已更新，请刷新后重试');if(action==='save'){const i=state.servers.findIndex(x=>x.id===args.server?.id);const input=i>=0&&args.server.identityMode===undefined?{...args.server,identityMode:state.servers[i].identityMode}:args.server;const s=validateServer(input);if(i<0)state.servers.push(s);else{if(!Object.hasOwn(args.server,'expiresOn'))s.expiresOn=state.servers[i].expiresOn;if(!Object.hasOwn(args.server,'projects'))s.projects=state.servers[i].projects;state.servers[i]=s;}}else if(action==='delete'){if(!state.servers.some(s=>s.id===args.id))throw new Error('服务器不存在');state.servers=state.servers.filter(s=>s.id!==args.id);}else if(action==='settings-set'){if(!args.settings||!approvalModes.includes(args.settings.approval))throw new Error('审批方式无效');state.settings=normalizeSettings(args.settings);}else throw new Error('未知操作');state.revision++;const temp=file+'.'+randomUUID()+'.tmp';await mkdir(dirname(file),{recursive:true});await writeFile(temp,JSON.stringify(state,null,2),'utf8');await rename(temp,file);return state;});queue=run.catch(()=>{});return run;
   }
   return operation;
 }
+// Reads the session's effective permission preset. Anything unresolved returns
+// undefined so the caller falls back to asking; a gap can never mean "skip".
+export function readSessionPolicy(ctx, exec) {
+  try {
+    if (!exec?.agent?.id) return undefined;
+    const read = name => (typeof ctx.get === 'function' ? ctx.get(name) : undefined);
+    const sessions = read('sessions');
+    const presets = read('permissionPresets');
+    if (!sessions?.get || !presets?.current || !presets?.resolve) return undefined;
+    const session = sessions.get(exec.agent.id);
+    if (!session) return undefined;
+    const name = presets.current(session);
+    if (!name) return undefined;
+    const spec = presets.resolve(name);
+    return spec ? { preset: name, sandbox: spec.sandbox, approval: spec.approval } : undefined;
+  } catch { return undefined; }
+}
 export function apply(ctx) {
-  const operation=createApplication({store:createStore(),credentials:credentialAdapter(ctx.credentials),protect,unprotect,ssh:sshOperation,approve:async(s,command,exec)=>(await ctx.approval.request({agent:exec.agent,toolName:'server_ssh',callId:exec.callId,reason:`SSH 远程执行 ${s.name} (${s.user}@${s.host}:${s.port})\n${command}`,signal:exec.signal}))==='allowed-once'});
+  const operation=createApplication({store:createStore(),credentials:credentialAdapter(ctx.credentials),protect,unprotect,ssh:sshOperation,sessionPolicy:exec=>readSessionPolicy(ctx,exec),approve:async(s,command,exec)=>(await ctx.approval.request({agent:exec.agent,toolName:'server_ssh',callId:exec.callId,reason:`SSH 远程执行 ${s.name} (${s.user}@${s.host}:${s.port})\n${command}`,signal:exec.signal}))==='allowed-once'});
   registerTools(ctx,operation);
   ctx.effect(()=>ctx.connection.fetch.register(createUiRoute(operation)));
 }

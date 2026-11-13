@@ -1,7 +1,7 @@
 // This exact /api route is carried by the authenticated DSH Connection,
 // including shell-owned transports. No HTML-global token or raw fetch required.
 const endpoint='local-server-toolbox';
-const actions=new Set(['list','get','save','delete','credential-set','credential-clear','credential-reveal','identity-set','identity-clear','host-probe','host-trust','test']);
+const actions=new Set(['list','get','save','delete','credential-set','credential-clear','credential-reveal','identity-set','identity-clear','settings-get','settings-set','host-probe','host-trust','test']);
 export function createUiRoute(operation) {
   return {path:`/api/${endpoint}`,methods:['POST'],requestBody:'buffered',async fetch(request){
     const headers={'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'};
