@@ -50,6 +50,7 @@ try {
  apply({effect:fn=>fn(),tools:{register:def=>{definitions.push(def);return()=>{};}},connection:{fetch:{register:route=>{routes.push(route);return()=>{};}}}});
  assert.equal(definitions[0].name,'server_toolbox');assert.equal(routes[0].path,'/api/local-server-toolbox');assert.deepEqual(routes[0].methods,['POST']);
  assert.ok(definitions[0].parameters.properties.server.properties.services.items.properties.url);
+ assert.ok(!JSON.stringify(definitions.map(d=>d.parameters)).includes('credential-reveal'));
  const simplifiedClient=await readFile(new URL('./client.js',import.meta.url),'utf8');assert.ok(!simplifiedClient.includes("t('projects')"));assert.ok(!simplifiedClient.includes("items('projects')"));assert.ok(simplifiedClient.includes("['name','url']"));assert.ok(simplifiedClient.includes("rel:'noopener noreferrer'"));
  // Render a synthetic server using mocked hooks; no real data or network.
  let Page,stateIndex=0;const labels={},hookStates=[];

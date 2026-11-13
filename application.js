@@ -36,7 +36,7 @@ export function createApplication({store,credentials,protect,unprotect,ssh,appro
     });
   }
   async function operation(args={},caller='agent',exec={}) {
-    if(['credential-set','credential-clear','host-probe','host-trust'].includes(args.action)){
+    if(['credential-set','credential-clear','credential-reveal','host-probe','host-trust'].includes(args.action)){
       if(caller!=='ui')throw new Error('密码与主机信任只能由用户在插件界面管理。');
       return serial(async()=>{
         const s=await read(args.id);
@@ -47,6 +47,18 @@ export function createApplication({store,credentials,protect,unprotect,ssh,appro
           const encrypted=await protect(args.password);
           await credentials.set(key(s,'password'),{encrypted});
           return {saved:true};
+        }
+        if(args.action==='credential-reveal'){
+          if(args.confirmed!==true)throw new Error('请先在页面确认查看密码。');
+          if(s.auth!=='password')throw new Error('该服务器未使用密码认证。');
+          exec.signal?.throwIfAborted();
+          const record=await credentials.get(key(s,'password'));
+          if(!record?.encrypted)throw new Error('该服务器未保存登录密码。');
+          let password;
+          try{password=await unprotect(record.encrypted);}catch{throw new Error('无法解密已保存密码，请确认仍使用原 Windows 用户，或重新设置密码。');}
+          exec.signal?.throwIfAborted();
+          if(typeof password!=='string'||!password||password.length>1024)throw new Error('已保存密码格式无效，请重新设置。');
+          return {password};
         }
         if(args.action==='credential-clear'){await credentials.delete(key(s,'password'));return {cleared:true};}
         if(args.action==='host-probe'){
