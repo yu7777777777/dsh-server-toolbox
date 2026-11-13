@@ -1,6 +1,6 @@
 {
   "name": "@local/dsh-server-toolbox",
-  "version": "1.4.0-beta.2",
+  "version": "1.4.0",
   "dependencies": { "ssh2": "1.17.0" },
   "scripts": { "test": "node test.mjs && node password-view-test.mjs && node integration-test.mjs && node stored-key-test.mjs" },
   "private": true,
