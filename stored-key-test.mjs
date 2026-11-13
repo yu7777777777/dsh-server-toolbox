@@ -124,11 +124,12 @@ try {
  phase='key clearing and target-change cleanup';
  await app({action:'identity-clear',id,revision:await revision()},'ui');assert.equal((await app({action:'get',id},'agent')).keyConfigured,false);
  before=connections;await assert.rejects(app({action:'test',id},'agent'),/不会回退/);assert.equal(connections,before);await importKey(id);
- const beforeBinding=binding(await raw(id));await save({...await raw(id),user:'different-user'});
+ const beforeBinding=binding(await raw(id));await save({...await raw(id),auth:'config',sshAlias:'synthetic-alias'});await save({...await raw(id),user:'different-user'});
  for(const kind of ['password','host','privatekey'])assert.equal(records.has(`server-toolbox/${kind}-${beforeBinding}`),false);
  await assert.rejects(app({action:'test',id},'agent'),/指纹/);
  phase='delete cleanup';
- const changed=await raw(id),changedBinding=binding(changed);await importKey(id);records.set(`server-toolbox/password-${changedBinding}`,{encrypted:await protect(password)});records.set(`server-toolbox/host-${changedBinding}`,{fingerprint});
+ await save({...await raw(id),auth:'key'});const changed=await raw(id),changedBinding=binding(changed);await importKey(id);records.set(`server-toolbox/password-${changedBinding}`,{encrypted:await protect(password)});records.set(`server-toolbox/host-${changedBinding}`,{fingerprint});
+ await save({...await raw(id),auth:'config'});
  await app({action:'delete',id,revision:await revision()},'agent');for(const kind of ['password','host','privatekey'])assert.equal(records.has(`server-toolbox/${kind}-${changedBinding}`),false);
  assert.ok(!(await readFile(file,'utf8')).includes('PRIVATE KEY'));
 } catch {failed=true;} finally {
