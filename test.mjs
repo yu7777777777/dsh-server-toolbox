@@ -59,6 +59,9 @@ try {
  runInNewContext(simplifiedClient,{window:{__ModuleLoader__:{load:definition=>definition.factory(()=>mockReact).apply({effect:fn=>fn(),locale:{register:(_namespace,language,values)=>{if(language==='zh')Object.assign(labels,values);return()=>{};},bind:()=>key=>labels[key],subscribe:()=>{},getSnapshot:()=>0},slots:{inject:(_name,fn)=>fn(),register:(meta,component)=>{if(meta.name==='main')Page=component;}},connection:{rpc:{call:()=>{throw Error('Unexpected network call');}}}})}}});
  const page=Page();const nodes=[];function walk(node){if(!node||typeof node!=='object')return;nodes.push(node);for(const child of node.children||[])walk(child);}walk(page);
  const article=nodes.find(n=>n.type==='article');assert.ok(article);
+ const settings=nodes.find(n=>n.type==='details'&&n.props.className==='stb-settings');assert.ok(settings,'approval settings must be reachable from the list view');
+ const settingsSelect=[];{const visit=node=>{if(!node||typeof node!=='object')return;settingsSelect.push(node);for(const child of node.children||[])visit(child);};visit(settings);}
+ const approvalSelect=settingsSelect.find(n=>n.type==='select');assert.ok(approvalSelect);assert.equal(approvalSelect.props.value,'ask','default mode must be ask');assert.deepEqual(approvalSelect.children.map(o=>o.props.value),['ask','follow-session']);
  const more=nodes.find(n=>n.props.className==='stb-more');assert.ok(more&&more.type==='details');
  const danger=nodes.filter(n=>n.type==='button'&&n.props.className==='stb-danger');assert.equal(danger.length,2);
  const moreNodes=[];function collect(node){if(!node||typeof node!=='object')return;moreNodes.push(node);for(const child of node.children||[])collect(child);}collect(more);assert.ok(danger.every(n=>moreNodes.includes(n)));

@@ -3,22 +3,38 @@ import { validatePrivateKey } from './ssh.js';
 
 export function binding(s) { return createHash('sha256').update(JSON.stringify([s.id,s.host,s.port,s.user,s.auth==='config'?s.sshAlias:''])).digest('hex'); }
 const key=(s,kind)=>`server-toolbox/${kind}-${binding(s)}`;
-export function createApplication({store,credentials,protect,unprotect,ssh,approve}) {
+export function createApplication({store,credentials,protect,unprotect,ssh,approve,sessionPolicy}) {
   const pending=new Map();let tail=Promise.resolve();
   const serial=fn=>{const p=tail.then(fn);tail=p.catch(()=>{});return p;};
   async function decorate(s){const {connection,...raw}=s;return {...raw,passwordConfigured:await credentials.has(key(s,'password')),keyConfigured:Boolean(await credentials.has(key(s,'privatekey'))),trustedFingerprint:(await credentials.get(key(s,'host')))?.fingerprint||null,...(connection?{connection}: {})};}
   async function read(id){return store({action:'get',id});}
+  // Skips the per-call prompt only when the user selected follow-session AND the
+  // live session really is full access with approvals off. Every gap asks instead.
+  async function resolveRunApproval(s,command,exec){
+    let mode='ask';
+    try{mode=(await store({action:'settings-get'})).settings.approval;}catch{mode='ask';}
+    if(mode==='follow-session'){
+      let policy;
+      try{policy=typeof sessionPolicy==='function'?await sessionPolicy(exec):undefined;}catch{policy=undefined;}
+      if(policy?.approval==='never'&&policy?.sandbox==='danger-full-access'){
+        exec.signal?.throwIfAborted();
+        return {approvedBy:'session-policy',preset:typeof policy.preset==='string'?policy.preset:undefined};
+      }
+    }
+    if(!await approve(s,command,exec))throw new Error('远程命令未获得本次执行授权；未发起 SSH 连接。');
+    return {approvedBy:'per-call'};
+  }
   async function runSSH(args,exec={}) {
     const s=await read(args.id);
     const pin=await credentials.get(key(s,'host'));
     if(!pin?.fingerprint)throw new Error('请在服务器工具箱中获取并核对主机指纹，再由你确认信任。');
     if(!['test','run'].includes(args.action))throw new Error('不支持的 SSH 操作');
-    let command;
+    let command,approval;
     if(args.action==='run'){
       if(typeof args.command!=='string'||!args.command.trim()||args.command.length>16000||args.command.includes('\0'))throw new Error('命令必须为非空文本且不超过 16000 字符');
       command=args.command;
       if(!exec.agent)throw new Error('远程执行必须属于一个受权限检查的 DSH 会话');
-      if(!await approve(s,command,exec))throw new Error('远程命令未获得本次执行授权；未发起 SSH 连接。');
+      approval=await resolveRunApproval(s,command,exec);
     }
     const seconds=args.timeoutSeconds??20;
     if(!Number.isInteger(seconds)||seconds<3||seconds>60)throw new Error('超时必须为 3–60 秒');
@@ -42,10 +58,20 @@ export function createApplication({store,credentials,protect,unprotect,ssh,appro
         try {privateKey=validatePrivateKey(await unprotect(record.encrypted));} catch {throw new Error('已保存私钥无法解密或无效，请使用原 Windows 用户或重新导入；不会回退使用文件路径。');}
       }
       exec.signal?.throwIfAborted();
-      return ssh(current,{password,privateKey,trusted:pin.fingerprint,command,timeoutSeconds:seconds,signal:exec.signal});
+      const value=await ssh(current,{password,privateKey,trusted:pin.fingerprint,command,timeoutSeconds:seconds,signal:exec.signal});
+      if(!approval)return value;
+      return {...value,approvedBy:approval.approvedBy,...(approval.preset?{sessionPreset:approval.preset}:{})};
     });
   }
   async function operation(args={},caller='agent',exec={}) {
+    if(args.action==='settings-get')return store({action:'settings-get'});
+    if(args.action==='settings-set'){
+      // The agent must never loosen its own approval requirement.
+      if(caller!=='ui')throw new Error('远程命令审批方式只能由用户在插件界面修改。');
+      const approval=args.settings?.approval;
+      if(!['ask','follow-session'].includes(approval))throw new Error('审批方式无效');
+      return store({action:'settings-set',revision:args.revision,settings:{approval}});
+    }
     if(['credential-set','credential-clear','credential-reveal','identity-set','identity-clear','host-probe','host-trust'].includes(args.action)){
       if(caller!=='ui')throw new Error('密码、私钥与主机信任只能由用户在插件界面管理。');
       return serial(async()=>{

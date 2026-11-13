@@ -4,7 +4,7 @@ $ErrorActionPreference='Stop'
 $source=(Resolve-Path -LiteralPath $SourceDirectory).Path
 $destination=$PSScriptRoot
 if($source.TrimEnd('\') -eq $destination.TrimEnd('\')){throw 'Source directory must differ from the Git repository.'}
-$files=@('index.js','client.js','application.js','secrets.js','ssh.js','tools.js','transport.js','package.json','cordis.patch.yml','test.mjs','password-view-test.mjs','integration-test.mjs','stored-key-test.mjs','icon.svg','locale\zh.json','locale\en.json')
+$files=@('index.js','client.js','application.js','secrets.js','ssh.js','tools.js','transport.js','package.json','cordis.patch.yml','test.mjs','password-view-test.mjs','approval-mode-test.mjs','integration-test.mjs','stored-key-test.mjs','icon.svg','locale\zh.json','locale\en.json')
 # Validate the entire allowlist before copying anything. Never copy data or dependencies.
 foreach($file in $files){if(-not(Test-Path -LiteralPath (Join-Path $source $file) -PathType Leaf)){throw "Missing source file: $file"}}
 foreach($file in $files){
