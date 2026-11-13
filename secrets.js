@@ -4,7 +4,7 @@ import { StringDecoder } from 'node:string_decoder';
 
 // Windows DPAPI CurrentUser: secrets travel over stdin, never command arguments.
 export function dpapi(value, decrypt = false) {
-  if (process.platform !== 'win32') return Promise.reject(new Error('本版密码保存需要 Windows DPAPI；不支持时不会降级为明文。'));
+  if (process.platform !== 'win32') return Promise.reject(new Error('本版凭证保存需要 Windows DPAPI；不支持时不会降级为明文。'));
   return new Promise((resolve, reject) => {
     const method = decrypt ? 'Unprotect' : 'Protect';
     const script = `$ErrorActionPreference='Stop'; Add-Type -AssemblyName System.Security; $s=[Console]::In.ReadToEnd(); $b=[Convert]::FromBase64String($s); $r=[System.Security.Cryptography.ProtectedData]::${method}($b,$null,[System.Security.Cryptography.DataProtectionScope]::CurrentUser); [Console]::Out.Write([Convert]::ToBase64String($r))`;
@@ -23,19 +23,36 @@ export function dpapi(value, decrypt = false) {
 export const protect = value => dpapi(value);
 export const unprotect = value => dpapi(value,true);
 
+function secretVariants(secret) {
+  const variants=new Set();
+  for(const value of Array.isArray(secret)?secret:[secret]){
+    if(typeof value!=='string'||!value)continue;
+    const raw=[value];
+    if(/-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(value)){
+      raw.push(value.replace(/\r\n/g,'\n'),value.trim());
+      const lines=value.split(/\r?\n/).filter(line=>/^[A-Za-z0-9+/=]{20,}$/.test(line));
+      raw.push(...lines,lines.join(''));
+    }
+    for(const s of raw)if(s){variants.add(s);variants.add(Buffer.from(s).toString('base64'));variants.add(encodeURIComponent(s));}
+  }
+  return [...variants].sort((a,b)=>b.length-a.length);
+}
 export function redact(text, secret) {
   let value=String(text);
-  if(secret) for (const s of [secret,Buffer.from(secret).toString('base64'),encodeURIComponent(secret)]) if(s) value=value.split(s).join('[REDACTED]');
+  for(const s of secretVariants(secret))value=value.split(s).join('[REDACTED]');
   return value;
 }
 export function safeOutput(buffers, secret, truncated, limit=65536) {
   let text=new StringDecoder('utf8').write(Buffer.concat(buffers));
-  if(truncated&&secret){
-    for(const variant of [secret,Buffer.from(secret).toString('base64'),encodeURIComponent(secret)]){
+  const variants=secretVariants(secret);
+  if(truncated){
+    for(const variant of variants){
+      if(text.endsWith(variant))continue;
       for(let n=Math.min(variant.length-1,text.length);n>0;n--)if(text.endsWith(variant.slice(0,n))){text=text.slice(0,-n);break;}
     }
   }
-  const bytes=Buffer.from(redact(text,secret),'utf8');
+  for(const s of variants)text=text.split(s).join('[REDACTED]');
+  const bytes=Buffer.from(text,'utf8');
   return {output:new StringDecoder('utf8').write(bytes.subarray(0,limit)),truncated:truncated||bytes.length>limit};
 }
 export function credentialAdapter(credentials) {
